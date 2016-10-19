@@ -63,6 +63,8 @@ public:
 	Mat depMap_gradie;
 	PointCloudXYZ pts_;
 	PointCloudNormal normal_;
+	PointCloudXYZ pts_no_plane;
+
 public:
 	pc_seg(const string PCD_file) :
 		PCD_file_(PCD_file),
@@ -292,7 +294,10 @@ public:
 				cv::normalize(distanceTransfrom_, distanceTransfrom_, 0, 255, NORM_MINMAX);
 				distanceTransfrom_.convertTo(distanceTransfrom_, CV_8U);
 				//binarize image to gain MARKERS
-				threshold(distanceTransfrom_, binary_, 0, 255, CV_THRESH_BINARY | CV_THRESH_OTSU);
+					//using otsu
+				//threshold(distanceTransfrom_, binary_, 0, 255, CV_THRESH_BINARY | CV_THRESH_OTSU);
+					//using basic threshold
+				threshold(distanceTransfrom_, binary_, 100, 255, CV_THRESH_BINARY);
 			}
 			else{
 				binary_.copyTo(tmp_input);
@@ -300,7 +305,10 @@ public:
 				cv::normalize(distanceTransfrom_, distanceTransfrom_, 0, 255, NORM_MINMAX);
 				distanceTransfrom_.convertTo(distanceTransfrom_, CV_8U);
 				//binarize image to gain MARKERS
-				threshold(distanceTransfrom_, binary_, 0, 255, CV_THRESH_BINARY | CV_THRESH_OTSU);
+					//using otsu
+				//threshold(distanceTransfrom_, binary_, 0, 255, CV_THRESH_BINARY | CV_THRESH_OTSU);
+					//using basic threshold
+				threshold(distanceTransfrom_, binary_, 100, 255, CV_THRESH_BINARY);
 			}
 		}
 		distanceTransfrom_.copyTo(distance_transform);
@@ -333,7 +341,7 @@ public:
 	void findAndDrawContours(Mat& edge_img, Mat& contour_img)
 	{
 		vector<vector<cv::Point> > contours;
-		findContours(edge_img, contours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
+		findContours(edge_img, contours, RETR_LIST, CV_CHAIN_APPROX_SIMPLE);
 
 		//		for (auto single_contour : contours){
 		//			if (single_contour.size() > 50){
@@ -352,13 +360,14 @@ public:
 
 	}
 
-	void extractPointsByIndices(pcl::PointIndices::Ptr indices, const PointCloudXYZ::Ptr ref_pts, PointCloudXYZ::Ptr extracted_pts, bool is_negative)
+	void extractPointsByIndices(pcl::PointIndices::Ptr indices, const PointCloudXYZ::Ptr ref_pts, PointCloudXYZ::Ptr extracted_pts, bool is_negative,bool is_organised)
 	{
 		//init
 		//indices = boost::make_shared<pcl::PointIndices>();
 		//extracted_pts = boost::make_shared<PointCloudXYZ>();
 
 		pcl::ExtractIndices<pcl::PointXYZ> tmp_extractor;
+		tmp_extractor.setKeepOrganized(is_organised);
 		tmp_extractor.setInputCloud(ref_pts);
 		tmp_extractor.setNegative(is_negative);
 		tmp_extractor.setIndices(indices);
@@ -528,14 +537,15 @@ int main()
 	Mat depMap_binary;
 	Mat depMap_DT;
 	Mat depMap_gradie;
+	PointCloudXYZ::Ptr pts_no_plane(new PointCloudXYZ);
 
-
-    pc_seg seg("/home/yake/catkin_ws/src/segmentation/pcd/1476275797_pc.pcd");
+    pc_seg seg("F:/Project/Segmentation/pcd/1476275668_pc.pcd");
 	//using contrast stretch to increase contrast
 	seg.depMap_U.copyTo(depMap_U);
 
 	pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
 	seg.plane_segment_proc(seg.pts_.makeShared(), 0.03, inliers);
+	seg.extractPointsByIndices(inliers, seg.pts_.makeShared(), pts_no_plane, true, true);
 	
 	//seg.contrast_stretching(depMap_U, depMap_stretch, 100, 250);
 	depMap_U.copyTo(depMap_stretch);
@@ -557,11 +567,12 @@ int main()
 	////using close operation to fill holes
 	//seg.morphology_proc(depMap_binary, depMap_morph, MORPH_CLOSE, MORPH_RECT, 3,3);
 
-    //seg.morphology_proc(depMap_stretch, depMap_stretch, MORPH_CLOSE, MORPH_RECT, 3, 1);
+	//seg.morphology_proc(depMap_stretch, depMap_stretch, MORPH_CLOSE, MORPH_RECT, 3, 1);
 
 	//using distance transform to gain markers
-    seg.distanceTransform_proc(depMap_stretch, depMap_DT,depMap_binary, 3);
-
+	seg.distanceTransform_proc(depMap_stretch, depMap_DT,depMap_binary, 3);
+	Mat depMap_stretch_function;
+	depMap_stretch.copyTo(depMap_stretch_function);
 	//find contours
 	vector<vector<cv::Point> > contours;
 	findContours(depMap_binary, contours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
@@ -607,7 +618,7 @@ int main()
 	seg.watershed_segmentation(contour_depMap_stretch, markers, contours, dist_contour_depMap_stretch, label_contour_depMap_stretch);
 
 	PointCloudXYZ::Ptr input_pts(new PointCloudXYZ);
-	input_pts = seg.pts_.makeShared();
+	input_pts = pts_no_plane;
 
 	//get labels using map container
 	std::map<int, pcl::PointIndices::Ptr> rough_clusters;
@@ -656,7 +667,7 @@ int main()
 			&& it_rough_clusters->second->indices.size()>1000)//here,[ it_rough_clusters->second ] is a shared ptr of pcl::PointIndices
 		{
 			PointCloudXYZ::Ptr tmp_pts(new PointCloudXYZ);
-			seg.extractPointsByIndices(it_rough_clusters->second, input_pts, tmp_pts,false);
+			seg.extractPointsByIndices(it_rough_clusters->second, input_pts, tmp_pts,false,false);
 			final_clusters.push_back(tmp_pts);
 
 		}
@@ -680,7 +691,7 @@ int main()
 	{
         //extract pts and remove Nan pts
 		PointCloudXYZ::Ptr label_pts(new PointCloudXYZ);
-		seg.extractPointsByIndices(*it_under_cluster, input_pts, label_pts,false);
+		seg.extractPointsByIndices(*it_under_cluster, input_pts, label_pts,false,false);
         PointCloudXYZ::Ptr NanFree_pts(new PointCloudXYZ);
         vector<int> pts_index;
         pcl::removeNaNFromPointCloud<pcl::PointXYZ>(*label_pts,*NanFree_pts,pts_index);
@@ -705,8 +716,8 @@ int main()
 		reg.setNumberOfNeighbours(5);
         reg.setInputCloud(NanFree_pts);
         reg.setInputNormals(NanFree_normal);
-        reg.setSmoothnessThreshold(2.0 / 180.0 * M_PI);
-        reg.setCurvatureThreshold(1);
+		reg.setSmoothnessThreshold(2.0 / 180.0 * M_PI);
+        reg.setCurvatureThreshold(0.2);
 		std::vector<pcl::PointIndices> clusters;
 		reg.extract(clusters);
 		t1 = ((double)cv::getTickCount() -t1) / cv::getTickFrequency();
@@ -726,7 +737,7 @@ int main()
 		{
 			pcl::PointIndices::Ptr indices_ptr = boost::make_shared<pcl::PointIndices>(*single_cluster);
 			pcl::PointCloud<pcl::PointXYZ>::Ptr tmp_pts(new pcl::PointCloud<pcl::PointXYZ>);
-            seg.extractPointsByIndices(indices_ptr, NanFree_pts, tmp_pts, false);
+            seg.extractPointsByIndices(indices_ptr, NanFree_pts, tmp_pts, false,false);
             if (tmp_pts->points.size()>3000)
 				final_clusters.push_back(tmp_pts);
 		}
